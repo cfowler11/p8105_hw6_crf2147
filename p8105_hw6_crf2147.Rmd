@@ -2,22 +2,24 @@
 title: "Homework 6"
 author: "Charlotte Fowler"
 date: "11/22/2019"
-output: html_document
+output: github_document
 ---
 
-```{r}
+```{r message = FALSE}
 library(tidyverse)
 library(caret)
 library(glmnet)
 library(modelr)
 library(mgcv)
+
+set.seed(1)
 ```
 
 
 
 # Problem 1 
 
-```{r}
+```{r message = FALSE}
 birthweight = read_csv("./data/birthweight.csv") %>% 
   mutate(
     babysex = factor(recode(babysex, "1" = "male", "2" = "female")), 
@@ -38,10 +40,9 @@ There are no missing values.
 
 
 First I will run LASSO to select the most important variables, with 10-fold cross validation. 
-```{r}
+```{r warning = FALSE}
 #Using LASSO to try models
 lambda <- 10^seq(-3, 3, length = 100)
-set.seed(123)
 lasso <- 
   train(
     bwt ~., 
@@ -62,6 +63,7 @@ summary(lm(bwt~babysex + bhead + blength + delwt + fincome + frace + gaweeks + m
 ```
 
 Choosing coefficients in order of significance, we're left with head circumfrance, length, the mother's weight at delivery, the number of gestational weeks, and the average number of cigarettes smoked per day during the pregnancy. 
+
 ```{r}
 #saving models
 my_model = lm(bwt ~ bhead + blength + delwt + gaweeks + smoken, data = birthweight)
@@ -72,7 +74,7 @@ model3 = lm(bwt ~ bhead * babysex * blength, data = birthweight)
 ```
 
 
-Make this comparison in terms of the cross-validated prediction error; use crossv_mc and functions in purrr as appropriate.
+
 
 ```{r}
 cv_df = 
@@ -91,8 +93,8 @@ cv_df =
          mod2  = map(train, ~lm(bwt ~ blength + gaweeks, data = .x)),
          mod3  = map(train, ~lm(bwt ~ bhead * babysex * blength, data = .x))) %>% 
   mutate(rmse_my_mod = map2_dbl(my_mod, test, ~rmse(model = .x, data = .y)),
-         rmse_mod3 = map2_dbl(mod1, test, ~rmse(model = .x, data = .y)),
-         rmse_mod3 = map2_dbl(mod2, test, ~rmse(model = .x, data = .y)))
+         rmse_mod2 = map2_dbl(mod2, test, ~rmse(model = .x, data = .y)),
+         rmse_mod3 = map2_dbl(mod3, test, ~rmse(model = .x, data = .y)))
 ```
 
 
@@ -106,10 +108,84 @@ cv_df %>%
     values_to = "rmse",
     names_prefix = "rmse_") %>% 
   mutate(model = fct_inorder(model)) %>% 
-  ggplot(aes(x = model, y = rmse)) + geom_violin()
+  ggplot(aes(x = model, y = rmse)) + geom_violin() + 
+  labs(title = "Comparison of Models", x = "model", y = "residual MSE")
 ```
 
-From the graph above, we can see that my model, the first, has the lowest residual MSE, followed by the third model with interactions. However, there is not very much difference between these two models. The second model, with only the baby length and gestational age is by far the worst model. 
+From the graph above, we can see that my model, the first, has the lowest residual MSE, followed by the third model with interactions. However, there is not very much difference between these two models. The second model, with only the baby length and gestational age is by far the worst model. My model has slightly less variation in residual MSE compared to the two suggested models. 
+
+# Problem 2 
+
+
+
+
+```{r message = FALSE}
+#downloading the data
+weather_df = 
+  rnoaa::meteo_pull_monitors(
+    c("USW00094728"),
+    var = c("PRCP", "TMIN", "TMAX"), 
+    date_min = "2017-01-01",
+    date_max = "2017-12-31") %>%
+  mutate(
+    name = recode(id, USW00094728 = "CentralPark_NY"),
+    tmin = tmin / 10,
+    tmax = tmax / 10) %>%
+  select(name, id, everything())
+```
+
+
+
+
+```{r}
+r_squared = function(x){
+  broom::glance(x) %>% 
+    select(r.squared)
+}
+
+log_b0b1 = function(x){
+  log(broom::tidy(x)[1,2] * broom::tidy(x)[2,2])
+}
+```
+
+
+```{r}
+
+boot_weather = weather_df %>% 
+  modelr::bootstrap(n = 5000) %>% 
+  mutate(
+    models = map(strap, ~lm(tmax ~ tmin, data = .x) ),
+    r_2 = map(models, r_squared),
+    log_val = map(models, log_b0b1)
+  ) %>% 
+  select(r_2, log_val) %>% 
+  unnest(c(r_2, log_val)) 
+```
+
+
+```{r}
+q2b = quantile(pull(boot_weather, estimate), 0.025)
+q9b = quantile(pull(boot_weather, estimate), 0.975)
+
+q2r = quantile(pull(boot_weather, r.squared), 0.025)
+q9r = quantile(pull(boot_weather, r.squared), 0.975)
+```
+
+The 95 percent confidence interval for r^2 is (`r round(q2r, digits = 2)`, `r round(q9r, digits = 2)`), and for log(beta0 * beta1) is (`r round(q2b, digits = 2)`, `r round(q9b, digits = 2)`). 
+
+```{r}
+boot_weather %>% 
+  ggplot(aes(x = r.squared)) +
+  geom_density() + 
+  labs(title = "Distribution of R Squared", y = "R Squared", x ="")
+```
+
+```{r}
+boot_weather %>% 
+  ggplot(aes(x = estimate)) +
+  geom_density() + 
+  labs(title = "Distribution of Log(beta0 * beta1)", y = "Log(beta0 * beta1)", x ="")
+```
 
 
 
